@@ -1,0 +1,15 @@
+Options -Indexes
+
+# Block direct web access to sensitive directories
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    # Deny config, src, private from web requests
+    RewriteRule ^(config|src|private)(/.*)?$ - [F,L]
+</IfModule>
+
+# Deny PHP execution outside /public — only block at root level
+# (public/ has its own .htaccess that allows PHP there)
+<FilesMatch "\.php$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
