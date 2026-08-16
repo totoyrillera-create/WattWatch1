@@ -1,3 +1,9 @@
+-- ============================================================
+-- WattWatch — reseed_passwords.sql
+-- Run this if you already imported schema.sql but can't log in.
+-- It UPDATE-replaces the seed user passwords with correct hashes.
+-- ============================================================
+
 USE wattwatch_db;
 
 -- admin@wattwatch.com  → password: admin123

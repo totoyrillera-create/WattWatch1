@@ -1,5 +1,8 @@
 # WattWatch — IoT Electricity Monitoring System
+**IT 313 – System Integration and Architecture**  
+Isabela State University · College of Computing Studies, ICT
 
+---
 
 ## Project Structure
 
@@ -40,7 +43,7 @@ WattWatch/
 ### 2. Database
 ```sql
 -- Run schema.sql in MySQL:
-    mysql -u root -p < config/schema.sql
+mysql -u root -p < config/schema.sql
 ```
 This creates the `wattwatch_db` database with all normalized tables and seeds demo users.
 
