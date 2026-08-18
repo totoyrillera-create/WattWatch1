@@ -1,147 +1,137 @@
-# WattWatch — IoT Electricity Monitoring System
-**IT 313 – System Integration and Architecture**  
-Isabela State University · College of Computing Studies, ICT
+# WattWatch
 
----
+IoT-based electricity consumption monitoring & anomaly detection system.
+ESP32 + PZEM-004T → Wi-Fi → PHP/MySQL web app → dashboard.
 
-## Project Structure
+File system follows the same pattern as the BioLock project: flat root
+pages, a small `ajax/` folder for session-authenticated UI calls, a
+separate `api/` folder for device-facing endpoints, one `config/db.php`,
+and `sql/` for the schema.
+
+## Folder structure
 
 ```
-WattWatch/
-├── .htaccess                   ← blocks /config /src /private from web
+wattwatch/
 ├── config/
-│   ├── app.php                 ← app constants, roles, permissions
-│   ├── database.php            ← PDO singleton, DB credentials
-│   └── schema.sql              ← normalized MySQL schema (run once)
-├── src/
-│   ├── Auth.php                ← session, login, logout, permission checks
-│   └── ApiController.php       ← all AJAX endpoints (REST-style JSON API)
-├── public/                     ← web root (point Apache/Nginx here)
-│   ├── .htaccess
-│   ├── index.php               ← PHP entry; injects session user → JS
-│   ├── index.html              ← static fallback (no PHP)
-│   └── assets/
-│       ├── css/
-│       │   └── style.css       ← complete stylesheet
-│       ├── js/
-│       │   └── app.js          ← SPA: routing, API calls, all page renders
-│       └── img/
-│           └── favicon.svg
-└── private/
-    └── login.php               ← server-rendered login (fallback / SSR)
+│   └── db.php          # constants + PDO connection ($pdo), in one file
+├── includes/            # shared code, required by every page
+│   ├── auth.php         # session bootstrap, require_login(), RBAC (can()/require_permission())
+│   ├── functions.php    # e(), log_activity(), csrf_field()/verify_csrf(), formatters
+│   ├── header.php       # <head> + topbar (opens the layout)
+│   ├── sidebar.php      # left nav, permission-aware
+│   └── footer.php       # closes the layout
+├── ajax/                 # session-authenticated calls from the UI
+│   └── get-live-data.php # polled every 10s to refresh dashboard stat cards
+├── api/                  # device-facing endpoints (per-device API key, not a session)
+│   └── sensor-data.php   # POST target for ESP32 firmware
+├── assets/
+│   ├── css/style.css
+│   ├── js/script.js
+│   └── img/
+├── sql/
+│   ├── wattwatch.sql             # schema + seed data
+│   └── least_privilege_user.sql  # dedicated MySQL app account
+├── index.php             # redirects to login.php
+├── login.php
+├── logout.php
+├── dashboard.php
+├── rooms.php              # rooms + equipment CRUD
+├── monitoring.php         # per-equipment live chart
+├── anomalies.php
+├── thresholds.php
+├── users.php              # account + role management
+├── logs.php
+├── reports.php            # date-range summaries + CSV export
+├── settings.php
+└── 403.php
 ```
 
----
-
-## Setup
-
-### 1. Requirements
-- PHP 8.1+
-- MySQL 8.0+ / MariaDB 10.6+
-- Apache with `mod_rewrite` enabled (or Nginx equivalent)
-
-### 2. Database
-```sql
--- Run schema.sql in MySQL:
-mysql -u root -p < config/schema.sql
-```
-This creates the `wattwatch_db` database with all normalized tables and seeds demo users.
-
-### 3. Configuration
-Edit `config/database.php`:
+Every page starts the same way:
 ```php
-define('DB_HOST', 'localhost');
-define('DB_USER', 'your_db_user');
-define('DB_PASS', 'your_db_password');
-define('DB_NAME', 'wattwatch_db');
+require_once 'config/db.php';
+require_once 'includes/functions.php';
+require_once 'includes/auth.php';
+require_permission('some_permission');   // or require_login();
+$active_page = 'dashboard';               // highlights the sidebar entry
 ```
+From `ajax/` or `api/`, the same three requires use `'../config/db.php'`, etc.
 
-### 4. Web Server
-Point your Apache `DocumentRoot` (or Virtual Host) to the **`public/`** folder:
-```apache
-<VirtualHost *:80>
-    ServerName wattwatch.local
-    DocumentRoot /var/www/html/WattWatch/public
-    <Directory /var/www/html/WattWatch/public>
-        AllowOverride All
-        Require all granted
-    </Directory>
-</VirtualHost>
+## Setup (XAMPP)
+
+1. Copy this `wattwatch/` folder into `htdocs/`.
+2. In phpMyAdmin (or the mysql CLI), run `sql/wattwatch.sql`, then
+   `sql/least_privilege_user.sql`.
+3. Edit `config/db.php` — set `DB_PASS` to match the password you used
+   in `least_privilege_user.sql`.
+4. Visit `http://localhost/wattwatch/` and log in with the seed admin
+   account: **admin / admin123** — change this password immediately
+   under Settings.
+
+## Database design
+
+Normalized to 3NF — no repeating groups, every non-key column depends
+only on its table's primary key:
+
+- **roles / permissions / role_permissions** — many-to-many junction so
+  privileges can be regranted by editing rows, no code changes needed.
+- **users** references `roles` (one role per user).
+- **rooms → equipment → readings** — one-to-many chain; `readings` is
+  kept separate from `equipment` because it's high-volume time-series
+  data, not equipment metadata.
+- **thresholds** is one-to-one with `equipment`, carrying its own
+  `updated_by`/`updated_at` audit trail.
+- **anomalies** references both `equipment` and the specific `reading`
+  that triggered it.
+- **devices** — one row per physical ESP32 unit, each with its own
+  `api_key` (see Security below).
+- **activity_logs** is an append-only audit trail referencing `users`.
+
+## User privilege levels (RBAC)
+
+Seeded roles and what they can do (see `role_permissions` in the SQL,
+enforced via `includes/auth.php`'s `can()` / `require_permission()`):
+
+| Permission | Administrator | Technician | Viewer |
+|---|---|---|---|
+| View dashboard / monitoring | ✅ | ✅ | ✅ |
+| Manage rooms & equipment | ✅ | ✅ | — |
+| Manage thresholds | ✅ | ✅ | — |
+| Resolve anomalies | ✅ | ✅ | — |
+| View / export reports | ✅ | ✅ | ✅ |
+| Manage users | ✅ | — | — |
+| View logs | ✅ | — | — |
+| Manage settings | ✅ | — | — |
+
+To add a role or change what one can do, edit the `roles` /
+`role_permissions` tables — the sidebar and every page follow the new
+privileges automatically since they check `can('permission_key')`
+rather than hardcoding role names.
+
+## Security notes
+
+- Passwords hashed with bcrypt (`password_hash`/`password_verify`).
+- All queries use PDO prepared statements (no string-built SQL).
+- CSRF token required on every state-changing form (`csrf_field()` / `verify_csrf()`).
+- Session-based auth for the web UI; each ESP32 authenticates with its
+  own key from the `devices` table — revoke one device without
+  affecting the others.
+- Idle session timeout (30 min, `SESSION_TIMEOUT` in `config/db.php`).
+- Basic login throttling (5 attempts / 60s).
+- Every create/update/delete/login/export writes to `activity_logs`.
+- The app connects as `wattwatch_app`, a MySQL user with only
+  SELECT/INSERT/UPDATE/DELETE — never as root.
+
+## ESP32 firmware contract
+
+`POST /api/sensor-data.php`
+Header: `X-API-KEY: <this device's key from the devices table>`
+Body:
+```json
+{ "device_uid": "ESP32-R204-AC01", "voltage": 230.1, "current": 21.78, "power": 5012.0, "energy": 3.42 }
 ```
-Enable `mod_rewrite`: `sudo a2enmod rewrite && sudo systemctl restart apache2`
-
-### 5. XAMPP (local dev)
-Place the `WattWatch/` folder inside `htdocs/`.  
-Visit: `http://localhost/WattWatch/public/`
-
----
-
-## Demo Accounts
-
-| Role               | Email                   | Password  | Access                                              |
-|--------------------|-------------------------|-----------|-----------------------------------------------------|
-| Administrator      | admin@wattwatch.com     | admin123  | Full access (all pages)                             |
-| Facility Manager   | juan@wattwatch.com      | juan123   | Dashboard, Monitoring, Anomalies, Reports, Profile  |
-| Technician         | maria@wattwatch.com     | maria123  | Dashboard, Monitoring, Anomalies, Profile           |
-| Viewer             | carlos@wattwatch.com    | carlos123 | Dashboard, Profile                                  |
-
-> **Change all passwords immediately after first login in production.**
-
----
-
-## Database Schema (Normalized — 3NF)
-
-| Table              | Description                                        |
-|--------------------|----------------------------------------------------|
-| `roles`            | Role lookup (admin, facility_manager, …)           |
-| `users`            | System users — references `roles`                  |
-| `buildings`        | Location master — eliminates string duplication    |
-| `equipment_types`  | AC, Lights, Projector, HVAC … lookup               |
-| `rooms`            | Monitored rooms/devices — refs buildings + types   |
-| `readings`         | Time-series ESP32 data — refs rooms                |
-| `anomaly_types`    | HIGH POWER, VOLTAGE SPIKE … lookup                 |
-| `anomalies`        | Detected events — refs rooms, readings, users      |
-| `activity_logs`    | Audit trail — refs users                           |
-| `system_settings`  | Key-value app configuration                        |
-
----
-
-## ESP32 Integration
-
-The ESP32 POSTs sensor readings to:
-```
-POST http://your-server/WattWatch/src/ApiController.php?action=post_reading
-Header: X-Api-Token: ESP32_SECRET_TOKEN_CHANGE_ME
-Body (JSON): { "room_id": 1, "voltage": 220.5, "current": 12.9, "power": 2842.5, "energy": 42.1 }
-```
-
-Change the token in `ApiController.php` → `postReading()` and in your ESP32 firmware.
-
----
-
-## User Roles & Permissions
-
-```
-Administrator      → dashboard, rooms, monitoring, anomalies, reports,
-                     thresholds, users, logs, settings
-Facility Manager   → dashboard, monitoring, anomalies, reports, profile
-Technician         → dashboard, monitoring, anomalies, profile
-Viewer             → dashboard, profile
-```
-
----
-
-## Features
-- Real-time electricity monitoring (V, A, W, kWh)
-- Threshold-based anomaly detection with auto-flagging
-- Role-based access control (4 privilege levels)
-- Web dashboard: stats, live chart, room cards, anomaly feed
-- Rooms & Equipment management (Admin)
-- Threshold editor with visual usage bars (Admin)
-- User management with role assignment (Admin)
-- Reports: daily / weekly / monthly with per-room breakdown
-- System logs / audit trail (Admin)
-- System settings with toggle alerts (Admin)
-- Profile editor + password change (all roles)
-- Session-based authentication with bcrypt password hashing
-- ESP32 + PZEM-004T API endpoint for hardware integration
+`device_uid` must already exist in the `equipment` table (add it under
+Rooms/Equipment first), and the API key must match a row in `devices`.
+The endpoint stores the reading and — if a threshold row exists for
+that equipment — flags an anomaly the moment `power` falls outside
+`[min_power, max_power]`. Wire the buzzer/LED trigger into the firmware
+based on the `"anomaly": true` field in the response.
