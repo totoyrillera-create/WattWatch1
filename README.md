@@ -78,12 +78,10 @@ Visit: `http://localhost/WattWatch/public/`
 
 ## Demo Accounts
 
-| Role               | Email                   | Password  | Access                                              |
-|--------------------|-------------------------|-----------|-----------------------------------------------------|
-| Administrator      | admin@wattwatch.com     | admin123  | Full access (all pages)                             |
-| Facility Manager   | juan@wattwatch.com      | juan123   | Dashboard, Monitoring, Anomalies, Reports, Profile  |
-| Technician         | maria@wattwatch.com     | maria123  | Dashboard, Monitoring, Anomalies, Profile           |
-| Viewer             | carlos@wattwatch.com    | carlos123 | Dashboard, Profile                                  |
+| Role              | Username | Password  | Access                                                                 |
+|-------------------|----------|-----------|-------------------------------------------------------------------------|
+| Administrator     | admin    | admin123  | Full control: users, rooms/equipment, thresholds, settings, logs, reports, dashboard, anomalies |
+| Staff/Technician  | staff    | staff123  | Dashboard, Real-time Monitoring, Reports, Anomalies (acknowledge/resolve only) |
 
 > **Change all passwords immediately after first login in production.**
 
@@ -93,7 +91,7 @@ Visit: `http://localhost/WattWatch/public/`
 
 | Table              | Description                                        |
 |--------------------|----------------------------------------------------|
-| `roles`            | Role lookup (admin, facility_manager, …)           |
+| `roles`            | Role lookup (Administrator, Staff/Technician)       |
 | `users`            | System users — references `roles`                  |
 | `buildings`        | Location master — eliminates string duplication    |
 | `equipment_types`  | AC, Lights, Projector, HVAC … lookup               |
@@ -121,20 +119,29 @@ Change the token in `ApiController.php` → `postReading()` and in your ESP32 fi
 
 ## User Roles & Permissions
 
+WattWatch uses a two-role model, enforced server-side via the
+`roles` / `permissions` / `role_permissions` tables and checked on every
+page with `require_permission()`:
+
 ```
-Administrator      → dashboard, rooms, monitoring, anomalies, reports,
+Administrator     → Full control: dashboard, rooms/equipment, monitoring,
+                     anomalies (view + acknowledge/resolve), reports,
                      thresholds, users, logs, settings
-Facility Manager   → dashboard, monitoring, anomalies, reports, profile
-Technician         → dashboard, monitoring, anomalies, profile
-Viewer             → dashboard, profile
+Staff/Technician  → Restricted: dashboard, real-time monitoring, reports
+                     (view + export), and anomalies — can acknowledge and
+                     resolve alerts but cannot manage rooms/equipment,
+                     thresholds, users, settings, or view audit logs
 ```
+
+Because permissions are DB-driven, privileges can be re-granted by
+editing `role_permissions` rows directly — no code changes required.
 
 ---
 
 ## Features
 - Real-time electricity monitoring (V, A, W, kWh)
 - Threshold-based anomaly detection with auto-flagging
-- Role-based access control (4 privilege levels)
+- Role-based access control (2 privilege levels: Administrator, Staff/Technician)
 - Web dashboard: stats, live chart, room cards, anomaly feed
 - Rooms & Equipment management (Admin)
 - Threshold editor with visual usage bars (Admin)

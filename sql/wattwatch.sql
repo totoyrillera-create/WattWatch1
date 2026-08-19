@@ -147,9 +147,8 @@ SET FOREIGN_KEY_CHECKS = 1;
 -- =====================================================================
 
 INSERT INTO roles (role_name, description) VALUES
-  ('Administrator', 'Full access: users, rooms, equipment, thresholds, reports, logs'),
-  ('Technician', 'Manages rooms, equipment, and thresholds; resolves anomalies'),
-  ('Viewer', 'Read-only access to dashboard, monitoring, and reports');
+  ('Administrator', 'Full control over user accounts, threshold configurations, rooms/equipment, system settings, and security audit logs'),
+  ('Staff/Technician', 'Real-time energy monitoring, historical trends/reports, and acknowledging or clearing anomaly alerts');
 
 INSERT INTO permissions (permission_key, description) VALUES
   ('view_dashboard',     'View dashboard and live monitoring'),
@@ -162,27 +161,27 @@ INSERT INTO permissions (permission_key, description) VALUES
   ('view_logs',          'View system activity logs'),
   ('manage_settings',    'Change system-wide settings');
 
--- Administrator: everything
+-- Administrator: full control (users, thresholds, rooms/equipment, settings, logs, everything)
 INSERT INTO role_permissions (role_id, permission_id)
   SELECT 1, permission_id FROM permissions;
 
--- Technician: operational access, no user management / settings
+-- Staff/Technician: monitoring, reports, and acknowledging/resolving anomalies only
+-- (no rooms/equipment, thresholds, users, logs, or settings management)
 INSERT INTO role_permissions (role_id, permission_id)
   SELECT 2, permission_id FROM permissions
-  WHERE permission_key IN ('view_dashboard','manage_rooms','manage_equipment',
-                            'manage_thresholds','resolve_anomalies','view_reports');
+  WHERE permission_key IN ('view_dashboard','view_reports','resolve_anomalies');
 
--- Viewer: read-only
-INSERT INTO role_permissions (role_id, permission_id)
-  SELECT 3, permission_id FROM permissions
-  WHERE permission_key IN ('view_dashboard','view_reports');
-
--- Default admin account -> username: admin  password: admin123
--- (bcrypt hash below — change this password after first login)
+-- Default accounts:
+--   admin / admin123           -> Administrator (full control)
+--   staff / staff123           -> Staff/Technician (monitoring, reports, anomaly handling)
+-- (bcrypt hashes below — change these passwords after first login)
 INSERT INTO users (role_id, username, email, password_hash, full_name, status) VALUES
   (1, 'admin', 'admin@wattwatch.local',
    '$2b$10$8BoLaJoE8HKoZwlI5dEjduLr40UcV1H6H8NEn1AugYEwBCF9CQyVO',
-   'System Administrator', 'active');
+   'System Administrator', 'active'),
+  (2, 'staff', 'staff@wattwatch.local',
+   '$2b$10$Ze//cCQl0JQ4VJv7XuYhnO4gpRK25lwmR2Qq04nsRara78OgwiVqG',
+   'Staff Technician', 'active');
 
 INSERT INTO equipment_types (type_name, icon) VALUES
   ('Air Conditioner', 'wind'),
