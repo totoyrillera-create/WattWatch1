@@ -112,7 +112,11 @@ class Auth {
         return (self::user()['role_key'] ?? '') === ROLE_ADMIN;
     }
 
-    public static function isManagerOrAbove(): bool {
-        return in_array(self::user()['role_key'] ?? '', [ROLE_ADMIN, ROLE_MANAGER], true);
+    public static function isStaff(): bool {
+        return (self::user()['role_key'] ?? '') === ROLE_STAFF;
+    }
+
+    public static function isStaffOrAbove(): bool {
+        return in_array(self::user()['role_key'] ?? '', [ROLE_ADMIN, ROLE_STAFF], true);
     }
 }

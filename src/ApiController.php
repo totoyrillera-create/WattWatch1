@@ -68,7 +68,9 @@ try {
         'get_logs' => requireAuth(fn() => getLogs(), 'logs'),
 
         // ── Reports ──────────────────────────────────────────
-        'get_report' => requireAuth(fn() => getReport()),
+        'get_report'    => requireAuth(fn() => getReport()),
+        'get_analytics' => requireAuth(fn() => getAnalytics()),
+        'auto_resolve_anomalies' => requireAuth(fn() => autoResolveAnomalies()),
 
         // ── Settings ─────────────────────────────────────────
         'get_settings'  => requireAuth(fn() => getSettings(),  'settings'),
@@ -364,7 +366,7 @@ function addUser(): void {
     $db = Database::connect();
 
     $roleId = $db->prepare('SELECT role_id FROM roles WHERE role_key=?');
-    $roleId->execute([$b['role_key'] ?? 'viewer']);
+    $roleId->execute([$b['role_key'] ?? 'staff']);
     $rid = $roleId->fetchColumn();
 
     $hash = password_hash($b['password'], PASSWORD_BCRYPT);
@@ -383,7 +385,7 @@ function updateUser(): void {
     $db = Database::connect();
 
     $roleId = $db->prepare('SELECT role_id FROM roles WHERE role_key=?');
-    $roleId->execute([$b['role_key'] ?? 'viewer']);
+    $roleId->execute([$b['role_key'] ?? 'staff']);
     $rid = $roleId->fetchColumn();
 
     $db->prepare(
@@ -518,4 +520,117 @@ function changePassword(): void {
        ->execute([password_hash($b['new_password'], PASSWORD_BCRYPT), $uid]);
     Auth::log($uid, 'auth', 'Password changed');
     json('ok', 'Password updated');
+}
+
+// ── Analytics (Data Science) ──────────────────────────────────
+
+function getAnalytics(): void {
+    $db = Database::connect();
+
+    // Hourly average power pattern (avg per hour across all rooms, last 30 days)
+    $hourly = $db->query(
+        "SELECT HOUR(read_at) AS hr, ROUND(AVG(power_watts),1) AS avg_power
+         FROM readings
+         WHERE read_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+         GROUP BY HOUR(read_at)
+         ORDER BY hr"
+    )->fetchAll();
+
+    // Fill missing hours with 0
+    $hourlyMap = array_fill(0, 24, 0);
+    foreach ($hourly as $h) $hourlyMap[(int)$h['hr']] = (float)$h['avg_power'];
+
+    // Weekly energy totals (last 7 days)
+    $weekly = $db->query(
+        "SELECT DATE(read_at) AS day,
+                DAYNAME(read_at) AS day_name,
+                ROUND(SUM(energy_kwh),2) AS total_kwh
+         FROM readings
+         WHERE read_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+         GROUP BY DATE(read_at)
+         ORDER BY day"
+    )->fetchAll();
+
+    // Room breakdown — avg, peak, total energy, anomaly count
+    $rooms = $db->query(
+        "SELECT r.room_id, r.room_name, r.equipment_label,
+                ROUND(AVG(rd.power_watts),1)  AS avg_power,
+                ROUND(MAX(rd.power_watts),1)  AS peak_power,
+                ROUND(SUM(rd.energy_kwh),2)   AS total_kwh,
+                COUNT(DISTINCT a.anomaly_id)  AS anomaly_count
+         FROM rooms r
+         LEFT JOIN readings rd ON rd.room_id = r.room_id
+             AND rd.read_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+         LEFT JOIN anomalies a ON a.room_id = r.room_id
+             AND a.detected_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+         WHERE r.is_active = 1
+         GROUP BY r.room_id
+         ORDER BY total_kwh DESC"
+    )->fetchAll();
+
+    // Total energy this week
+    $weekTotal = $db->query(
+        "SELECT ROUND(SUM(energy_kwh),2) FROM readings
+         WHERE read_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)"
+    )->fetchColumn() ?: 0;
+
+    // Monthly forecast — avg daily * 30
+    $dailyAvg = $db->query(
+        "SELECT ROUND(AVG(day_total),2) FROM (
+             SELECT DATE(read_at) AS d, SUM(energy_kwh) AS day_total
+             FROM readings
+             WHERE read_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+             GROUP BY DATE(read_at)
+         ) t"
+    )->fetchColumn() ?: 0;
+    $monthForecast = round($dailyAvg * 30, 2);
+
+    // Anomaly stats
+    $anomalyStats = $db->query(
+        "SELECT COUNT(*) AS total,
+                SUM(power_at_event - threshold_used) AS total_excess,
+                MIN(HOUR(detected_at)) AS first_hour,
+                MAX(HOUR(detected_at)) AS last_hour
+         FROM anomalies
+         WHERE detected_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)"
+    )->fetch();
+
+    // Most affected room
+    $topRoom = $db->query(
+        "SELECT r.room_name, r.equipment_label, COUNT(*) AS cnt
+         FROM anomalies a JOIN rooms r ON r.room_id = a.room_id
+         WHERE a.detected_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+         GROUP BY a.room_id ORDER BY cnt DESC LIMIT 1"
+    )->fetch();
+
+    // Settings for cost rate
+    $rate = $db->query(
+        "SELECT setting_value FROM system_settings WHERE setting_key='kwh_rate'"
+    )->fetchColumn() ?: 6.00;
+
+    json('ok', [
+        'hourly_pattern' => array_values($hourlyMap),
+        'weekly'         => $weekly,
+        'rooms'          => $rooms,
+        'week_total_kwh' => (float)$weekTotal,
+        'daily_avg_kwh'  => (float)$dailyAvg,
+        'month_forecast' => (float)$monthForecast,
+        'kwh_rate'       => (float)$rate,
+        'anomaly_stats'  => $anomalyStats,
+        'top_room'       => $topRoom ?: null,
+    ]);
+}
+
+// ── Auto-resolve anomalies older than 30 days ─────────────────
+
+function autoResolveAnomalies(): void {
+    $db = Database::connect();
+    $db->prepare(
+        "DELETE FROM anomalies
+         WHERE status = 'resolved'
+         AND resolved_at < DATE_SUB(NOW(), INTERVAL 30 DAY)"
+    )->execute();
+    $affected = $db->query("SELECT ROW_COUNT()")->fetchColumn();
+    Auth::log(null, 'system', "Auto-removed $affected resolved anomalies older than 30 days");
+    json('ok', ['removed' => (int)$affected]);
 }

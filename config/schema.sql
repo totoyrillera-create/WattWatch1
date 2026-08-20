@@ -1,6 +1,3 @@
--- ============================================================
--- WattWatch Database Schema  (3NF normalized)
--- ============================================================
 
 CREATE DATABASE IF NOT EXISTS wattwatch_db
     CHARACTER SET utf8mb4
@@ -8,31 +5,25 @@ CREATE DATABASE IF NOT EXISTS wattwatch_db
 
 USE wattwatch_db;
 
--- ──────────────────────────────────────────────────────────────
--- 1. ROLES  (lookup, eliminates string duplication in users)
--- ──────────────────────────────────────────────────────────────
+-- ── 1. ROLES ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS roles (
     role_id   TINYINT      UNSIGNED NOT NULL AUTO_INCREMENT,
-    role_key  VARCHAR(30)  NOT NULL UNIQUE,   -- 'admin', 'facility_manager', …
+    role_key  VARCHAR(20)  NOT NULL UNIQUE,
     role_name VARCHAR(60)  NOT NULL,
     PRIMARY KEY (role_id)
 ) ENGINE=InnoDB;
 
 INSERT IGNORE INTO roles (role_key, role_name) VALUES
-    ('admin',            'Administrator'),
-    ('facility_manager', 'Facility Manager'),
-    ('technician',       'Technician'),
-    ('viewer',           'Viewer');
+    ('admin', 'Administrator'),
+    ('staff', 'Staff / Technician');
 
--- ──────────────────────────────────────────────────────────────
--- 2. USERS
--- ──────────────────────────────────────────────────────────────
+-- ── 2. USERS ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS users (
     user_id    INT          UNSIGNED NOT NULL AUTO_INCREMENT,
     role_id    TINYINT      UNSIGNED NOT NULL,
     full_name  VARCHAR(120) NOT NULL,
     email      VARCHAR(160) NOT NULL UNIQUE,
-    password   VARCHAR(255) NOT NULL,          -- bcrypt hash
+    password   VARCHAR(255) NOT NULL,
     department VARCHAR(80)  DEFAULT NULL,
     avatar     VARCHAR(10)  NOT NULL DEFAULT '',
     status     ENUM('active','inactive') NOT NULL DEFAULT 'active',
@@ -44,9 +35,7 @@ CREATE TABLE IF NOT EXISTS users (
     CONSTRAINT fk_users_role FOREIGN KEY (role_id) REFERENCES roles (role_id)
 ) ENGINE=InnoDB;
 
--- ──────────────────────────────────────────────────────────────
--- 3. BUILDINGS  (location master — avoids repeating strings)
--- ──────────────────────────────────────────────────────────────
+-- ── 3. BUILDINGS ─────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS buildings (
     building_id   SMALLINT     UNSIGNED NOT NULL AUTO_INCREMENT,
     building_name VARCHAR(80)  NOT NULL UNIQUE,
@@ -57,9 +46,7 @@ CREATE TABLE IF NOT EXISTS buildings (
 INSERT IGNORE INTO buildings (building_name) VALUES
     ('Building A'), ('Building B'), ('Building C');
 
--- ──────────────────────────────────────────────────────────────
--- 4. EQUIPMENT TYPES  (lookup — AC, projector, lights …)
--- ──────────────────────────────────────────────────────────────
+-- ── 4. EQUIPMENT TYPES ───────────────────────────────────────
 CREATE TABLE IF NOT EXISTS equipment_types (
     type_id   SMALLINT     UNSIGNED NOT NULL AUTO_INCREMENT,
     type_name VARCHAR(80)  NOT NULL UNIQUE,
@@ -77,20 +64,18 @@ INSERT IGNORE INTO equipment_types (type_name, icon_key) VALUES
     ('Computers',       'computer'),
     ('Other',           'other');
 
--- ──────────────────────────────────────────────────────────────
--- 5. ROOMS  (one row per monitored location/device)
--- ──────────────────────────────────────────────────────────────
+-- ── 5. ROOMS ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS rooms (
-    room_id         INT          UNSIGNED NOT NULL AUTO_INCREMENT,
-    building_id     SMALLINT     UNSIGNED NOT NULL,
-    type_id         SMALLINT     UNSIGNED NOT NULL,
-    room_name       VARCHAR(80)  NOT NULL,
-    equipment_label VARCHAR(80)  NOT NULL,     -- e.g. "Room 103"
+    room_id         INT           UNSIGNED NOT NULL AUTO_INCREMENT,
+    building_id     SMALLINT      UNSIGNED NOT NULL,
+    type_id         SMALLINT      UNSIGNED NOT NULL,
+    room_name       VARCHAR(80)   NOT NULL,
+    equipment_label VARCHAR(80)   NOT NULL,
     threshold_watts DECIMAL(10,2) NOT NULL DEFAULT 1000.00,
     status          ENUM('normal','anomaly') NOT NULL DEFAULT 'normal',
-    is_active       TINYINT(1)   NOT NULL DEFAULT 1,
-    created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    is_active       TINYINT(1)    NOT NULL DEFAULT 1,
+    created_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (room_id),
     KEY fk_rooms_building (building_id),
     KEY fk_rooms_type     (type_id),
@@ -98,9 +83,7 @@ CREATE TABLE IF NOT EXISTS rooms (
     CONSTRAINT fk_rooms_type     FOREIGN KEY (type_id)     REFERENCES equipment_types (type_id)
 ) ENGINE=InnoDB;
 
--- ──────────────────────────────────────────────────────────────
--- 6. READINGS  (time-series — one row per ESP32 push)
--- ──────────────────────────────────────────────────────────────
+-- ── 6. READINGS ──────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS readings (
     reading_id   BIGINT        UNSIGNED NOT NULL AUTO_INCREMENT,
     room_id      INT           UNSIGNED NOT NULL,
@@ -114,21 +97,17 @@ CREATE TABLE IF NOT EXISTS readings (
     CONSTRAINT fk_readings_room FOREIGN KEY (room_id) REFERENCES rooms (room_id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
--- ──────────────────────────────────────────────────────────────
--- 7. ANOMALY TYPES  (lookup)
--- ──────────────────────────────────────────────────────────────
+-- ── 7. ANOMALY TYPES ─────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS anomaly_types (
-    anomaly_type_id   TINYINT      UNSIGNED NOT NULL AUTO_INCREMENT,
-    type_label        VARCHAR(40)  NOT NULL UNIQUE,   -- 'HIGH POWER', 'VOLTAGE SPIKE', …
+    anomaly_type_id TINYINT      UNSIGNED NOT NULL AUTO_INCREMENT,
+    type_label      VARCHAR(40)  NOT NULL UNIQUE,
     PRIMARY KEY (anomaly_type_id)
 ) ENGINE=InnoDB;
 
 INSERT IGNORE INTO anomaly_types (type_label) VALUES
     ('HIGH POWER'), ('HIGH CURRENT'), ('VOLTAGE SPIKE'), ('LOW VOLTAGE'), ('OTHER');
 
--- ──────────────────────────────────────────────────────────────
--- 8. ANOMALIES
--- ──────────────────────────────────────────────────────────────
+-- ── 8. ANOMALIES ─────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS anomalies (
     anomaly_id      INT           UNSIGNED NOT NULL AUTO_INCREMENT,
     room_id         INT           UNSIGNED NOT NULL,
@@ -141,39 +120,35 @@ CREATE TABLE IF NOT EXISTS anomalies (
     resolved_at     DATETIME      DEFAULT NULL,
     detected_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (anomaly_id),
-    KEY fk_anomalies_room    (room_id),
-    KEY fk_anomalies_reading (reading_id),
-    KEY fk_anomalies_type    (anomaly_type_id),
-    KEY fk_anomalies_resolver(resolved_by),
+    KEY fk_anomalies_room     (room_id),
+    KEY fk_anomalies_reading  (reading_id),
+    KEY fk_anomalies_type     (anomaly_type_id),
+    KEY fk_anomalies_resolver (resolved_by),
     CONSTRAINT fk_anomalies_room     FOREIGN KEY (room_id)         REFERENCES rooms         (room_id)         ON DELETE CASCADE,
     CONSTRAINT fk_anomalies_reading  FOREIGN KEY (reading_id)      REFERENCES readings       (reading_id)      ON DELETE SET NULL,
     CONSTRAINT fk_anomalies_type     FOREIGN KEY (anomaly_type_id) REFERENCES anomaly_types  (anomaly_type_id),
     CONSTRAINT fk_anomalies_resolver FOREIGN KEY (resolved_by)     REFERENCES users          (user_id)         ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
--- ──────────────────────────────────────────────────────────────
--- 9. ACTIVITY LOGS  (audit trail)
--- ──────────────────────────────────────────────────────────────
+-- ── 9. ACTIVITY LOGS ─────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS activity_logs (
-    log_id      BIGINT       UNSIGNED NOT NULL AUTO_INCREMENT,
-    user_id     INT          UNSIGNED DEFAULT NULL,
-    log_type    ENUM('auth','room','anomaly','settings','report','system') NOT NULL DEFAULT 'system',
-    action      VARCHAR(255) NOT NULL,
-    ip_address  VARCHAR(45)  DEFAULT NULL,
-    logged_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    log_id     BIGINT       UNSIGNED NOT NULL AUTO_INCREMENT,
+    user_id    INT          UNSIGNED DEFAULT NULL,
+    log_type   ENUM('auth','room','anomaly','settings','report','system') NOT NULL DEFAULT 'system',
+    action     VARCHAR(255) NOT NULL,
+    ip_address VARCHAR(45)  DEFAULT NULL,
+    logged_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (log_id),
     KEY fk_logs_user (user_id),
     KEY idx_logs_time (logged_at),
     CONSTRAINT fk_logs_user FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
--- ──────────────────────────────────────────────────────────────
--- 10. SYSTEM SETTINGS  (key-value)
--- ──────────────────────────────────────────────────────────────
+-- ── 10. SYSTEM SETTINGS ──────────────────────────────────────
 CREATE TABLE IF NOT EXISTS system_settings (
-    setting_key   VARCHAR(60)  NOT NULL,
-    setting_value TEXT         NOT NULL,
-    updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    setting_key   VARCHAR(60) NOT NULL,
+    setting_value TEXT        NOT NULL,
+    updated_at    DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (setting_key)
 ) ENGINE=InnoDB;
 
@@ -182,22 +157,18 @@ INSERT IGNORE INTO system_settings (setting_key, setting_value) VALUES
     ('timezone',       'Asia/Manila'),
     ('refresh_rate',   '5'),
     ('data_retention', '90'),
+    ('kwh_rate',       '6.00'),
     ('alert_email',    '1'),
     ('alert_dashboard','1'),
     ('alert_buzzer',   '1');
 
--- ──────────────────────────────────────────────────────────────
--- SEED USERS  (bcrypt $2y$10$ hashes — verified with PHP password_verify)
--- Passwords:  admin123 / juan123 / maria123 / carlos123
--- ──────────────────────────────────────────────────────────────
+-- ── SEED USERS ───────────────────────────────────────────────
+-- admin123 → $2y$10$6s6zaE...  |  staff123 → generated below
 INSERT IGNORE INTO users (role_id, full_name, email, password, department, avatar, status) VALUES
-    (1, 'Admin',          'admin@wattwatch.com',  '$2y$10$6s6zaE/MaAyxs7ZqZG2daOwWigLiebwR5YSdBbMFPYPYROP99VS/6', NULL,          'A',  'active'),
-    (2, 'Juan Dela Cruz', 'juan@wattwatch.com',   '$2y$10$J.JvJptrgToLnV8CTGfOD.TsBz1.503nVAEZh6BQGdakuAOq3gvTu', 'Engineering', 'J',  'active'),
-    (3, 'Maria Santos',   'maria@wattwatch.com',  '$2y$10$UMX17WfX96PDRuXwzV5/NOxIWt8y3yHWd5x1r27kHpTdvAdGASyxm', 'Maintenance', 'M',  'active'),
-    (4, 'Carlos Reyes',   'carlos@wattwatch.com', '$2y$10$G07mmAKMh3lnGlGVHt8CneJsqCw7f4Vb6tbLfZmzHCBUeIU862Cfy', 'Admin',       'CR', 'active');
--- Change all passwords immediately after first login in production.
+    (1, 'Admin',         'admin@wattwatch.com', '$2y$10$6s6zaE/MaAyxs7ZqZG2daOwWigLiebwR5YSdBbMFPYPYROP99VS/6', NULL,          'A',  'active'),
+    (2, 'Juan Dela Cruz','staff@wattwatch.com', '$2y$10$J.JvJptrgToLnV8CTGfOD.TsBz1.503nVAEZh6BQGdakuAOq3gvTu', 'Engineering', 'J',  'active');
 
--- SEED ROOMS
+-- ── SEED ROOMS ───────────────────────────────────────────────
 INSERT IGNORE INTO rooms (building_id, type_id, room_name, equipment_label, threshold_watts) VALUES
     (1, 1, 'Room 204',     'Air Conditioner', 3000),
     (2, 7, 'Computer Lab', 'Room 103',         2000),

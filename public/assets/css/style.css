@@ -230,9 +230,7 @@ input,select,textarea{font-family:inherit;}
 .b-resolved{background:var(--green-bg);color:var(--green-dark);}
 .b-inactive{background:var(--bg-secondary);color:var(--text-muted);border:1px solid var(--border-md);}
 .b-admin   {background:var(--bg-secondary);color:var(--text-muted);border:1px solid var(--border-md);}
-.b-manager {background:var(--bg-secondary);color:var(--text-muted);border:1px solid var(--border-md);}
-.b-tech    {background:var(--bg-secondary);color:var(--text-muted);border:1px solid var(--border-md);}
-.b-viewer  {background:var(--bg-secondary);color:var(--text-muted);border:1px solid var(--border-md);}
+.b-staff   {background:var(--bg-secondary);color:var(--text-muted);border:1px solid var(--border-md);}
 
 /* ══════════ BUTTONS ══════════ */
 .btn{display:inline-flex;align-items:center;gap:7px;padding:8px 16px;border-radius:var(--radius);border:none;font-size:13px;font-weight:600;cursor:pointer;transition:opacity .15s,background .15s;}

@@ -1,26 +1,15 @@
 Options -Indexes
-DirectoryIndex index.php
 
-# Security headers
-<IfModule mod_headers.c>
-    Header set X-Content-Type-Options "nosniff"
-    Header set X-Frame-Options "SAMEORIGIN"
-    Header set X-XSS-Protection "1; mode=block"
+# Block direct web access to sensitive directories
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    # Deny config, src, private from web requests
+    RewriteRule ^(config|src|private)(/.*)?$ - [F,L]
 </IfModule>
 
-# Block direct web access to config, sql, and includes — these should only
-# ever be reached via require/include from a PHP page, never a direct URL.
-<IfModule mod_authz_core.c>
-    <FilesMatch "\.(sql|env|log|md|lock)$">
-        Require all denied
-    </FilesMatch>
-</IfModule>
-<IfModule !mod_authz_core.c>
-    <FilesMatch "\.(sql|env|log|md|lock)$">
-        Order allow,deny
-        Deny from all
-    </FilesMatch>
-</IfModule>
-
-RewriteEngine On
-RewriteRule ^(config|includes|sql)/ - [F,L]
+# Deny PHP execution outside /public — only block at root level
+# (public/ has its own .htaccess that allows PHP there)
+<FilesMatch "\.php$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>

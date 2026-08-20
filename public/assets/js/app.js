@@ -36,16 +36,12 @@ function toggleTheme(){darkMode=!darkMode;applyTheme();}
 const state={user:null,page:'dashboard',rooms:[],users:[],anomalies:[],esp32Online:false};
 
 const ROLE_STYLE={
-  admin:            {label:'Administrator',   avatarBg:'var(--avatar-bg)',avatarColor:'var(--text)',bc:'b-admin'},
-  facility_manager: {label:'Facility Manager',avatarBg:'var(--avatar-bg)',avatarColor:'var(--text)',bc:'b-manager'},
-  technician:       {label:'Technician',      avatarBg:'var(--avatar-bg)',avatarColor:'var(--text)',bc:'b-tech'},
-  viewer:           {label:'Viewer',          avatarBg:'var(--avatar-bg)',avatarColor:'var(--text)',bc:'b-viewer'},
+  admin: {label:'Administrator',    avatarBg:'var(--avatar-bg)',avatarColor:'var(--text)',bc:'b-admin'},
+  staff: {label:'Staff / Technician',avatarBg:'var(--avatar-bg)',avatarColor:'var(--text)',bc:'b-staff'},
 };
 const ROLE_PERMS_MAP={
-  admin:            ['dashboard','rooms','monitoring','anomalies','analytics','reports','thresholds','users','logs','settings'],
-  facility_manager: ['dashboard','monitoring','anomalies','analytics','reports','profile'],
-  technician:       ['dashboard','monitoring','anomalies','profile'],
-  viewer:           ['dashboard','profile'],
+  admin: ['dashboard','rooms','monitoring','anomalies','analytics','reports','thresholds','users','logs','settings','profile'],
+  staff: ['dashboard','monitoring','anomalies','analytics','reports','profile'],
 };
 
 const ROOM_ICONS={
@@ -144,8 +140,8 @@ function navigate(page){
   state.page=page;
   $$('.nav-item').forEach(el=>el.classList.toggle('active',el.dataset.page===page));
   const role=state.user?.role_key;
-  const titles={dashboard:'Dashboard',rooms:'Rooms / Equipment',monitoring:(['facility_manager','technician'].includes(role)?'My Monitoring':'Real-time Monitoring'),anomalies:'Anomalies',analytics:'Analytics',reports:'Reports',thresholds:'Thresholds',users:'User Management',logs:'System Logs',settings:'Settings',profile:'My Profile'};
-  const subs={dashboard:`Welcome back, ${state.user?.full_name}!`,rooms:'Manage monitored rooms and devices',monitoring:'Live electricity readings',anomalies:'Detected power anomalies',analytics:'Data science & power insights',reports:'Consumption summaries',thresholds:'Set power limits',users:'Manage system users',logs:'Activity and audit trail',settings:'Configure WattWatch',profile:'Manage your account'};
+  const titles={dashboard:'Dashboard',rooms:'Rooms / Equipment',monitoring:'Real-time Monitoring',anomalies:'Anomalies',analytics:'Analytics',reports:'Reports',thresholds:'Thresholds',users:'User Management',logs:'System Logs',settings:'Settings',profile:'My Profile'};
+  const subs={dashboard:`Welcome back, ${state.user?.full_name}!`,rooms:'Manage monitored rooms and devices',monitoring:'Live electricity readings',anomalies:'Detected power anomalies',analytics:'Hourly patterns, weekly trends, room breakdown & consumption forecast',reports:'Consumption summaries',thresholds:'Set power limits',users:'Manage system users',logs:'Activity and audit trail',settings:'Configure WattWatch',profile:'Manage your account'};
   const tl=$('topbar-title'),ts=$('topbar-sub');
   if(tl)tl.textContent=titles[page]||'WattWatch';
   if(ts)ts.textContent=subs[page]||'';
@@ -209,7 +205,7 @@ async function renderDashboard(){
       </div>
       <div class="activity-panel">
         <div class="panel-header">
-          <h3>${state.user?.role_key==='admin'?'Recent Activity':'My Recent Activity'}</h3>
+          <h3>Recent Activity</h3>
           <a href="#" onclick="navigate('logs');return false" style="font-size:12px;color:var(--green);font-weight:600">View all</a>
         </div>
         <div id="activity-list"></div>
@@ -464,7 +460,7 @@ async function renderAnomalies(){
 
 async function loadAnomList(filter){
   const el=$('anom-list');if(!el)return;
-  const canAct=['admin','facility_manager'].includes(state.user?.role_key);
+  const canAct=['admin','staff'].includes(state.user?.role_key);
   try{
     const list=await api('get_anomalies',{status:filter});
     el.innerHTML=list.length?list.map(a=>{
@@ -495,48 +491,85 @@ async function loadAnomList(filter){
 function filterAnom(f,btn){$$('.ftab').forEach(e=>e.classList.remove('active'));btn.classList.add('active');loadAnomList(f);}
 async function resolveAnom(id){try{await api('resolve_anomaly',{anomaly_id:id},'POST');loadAnomList('all');}catch(e){alert(e.message);}}
 
-// ── Analytics (Data Science) ───────────────────────────────────
+// ── Analytics (Data Science) ─────────────────────────────────
 async function renderAnalytics(){
   const pc=$('page-content');
   pc.innerHTML=`<div class="spinner-wrap"><div class="spinner"></div></div>`;
 
-  // Demo analytics data
-  const hourlyAvg=[620,540,490,470,460,480,780,1820,3200,4100,4800,5100,5300,5000,4700,4300,3800,3200,2600,2100,1700,1300,990,740];
-  const roomData=[
-    {name:'Server Room',equip:'HVAC',      avg:4800,peak:5200,kwh:72.0,anomalies:0},
-    {name:'Room 204',   equip:'Air Cond',  avg:2850,peak:5012,kwh:42.1,anomalies:2},
-    {name:'Computer Lab',equip:'Room 103', avg:1240,peak:2200,kwh:18.6,anomalies:1},
-    {name:'Cafeteria',  equip:'Fridges',   avg:950, peak:1100,kwh:14.3,anomalies:0},
-    {name:'Room 101',   equip:'Projector', avg:420, peak:812, kwh:6.3, anomalies:1},
-    {name:'Room 201',   equip:'Fan',       avg:110, peak:145, kwh:1.7, anomalies:0},
+  // Demo fallbacks (used when DB has no readings yet)
+  const DEMO_HOURLY=[620,540,490,470,460,480,780,1820,3200,4100,4800,5100,5300,5000,4700,4300,3800,3200,2600,2100,1700,1300,990,740];
+  const DEMO_WEEKLY={days:['Mon','Tue','Wed','Thu','Fri','Sat','Sun'],kwh:[38.2,42.1,35.0,44.8,48.3,29.1,22.4]};
+  const DEMO_ROOMS=[
+    {room_name:'Server Room',  equipment_label:'HVAC',         avg_power:4800,peak_power:5200,total_kwh:72.0, anomaly_count:0},
+    {room_name:'Room 204',     equipment_label:'Air Cond.',    avg_power:2850,peak_power:5012,total_kwh:42.1, anomaly_count:2},
+    {room_name:'Computer Lab', equipment_label:'Room 103',     avg_power:1240,peak_power:2200,total_kwh:18.6, anomaly_count:1},
+    {room_name:'Cafeteria',    equipment_label:'Refrigerators',avg_power:950, peak_power:1100,total_kwh:14.3, anomaly_count:0},
+    {room_name:'Room 101',     equipment_label:'Projector',    avg_power:420, peak_power:812, total_kwh:6.3,  anomaly_count:1},
+    {room_name:'Room 201',     equipment_label:'Electric Fan', avg_power:110, peak_power:145, total_kwh:1.7,  anomaly_count:0},
   ];
-  const weekDays=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-  const weekKwh=[38.2,42.1,35.0,44.8,48.3,29.1,22.4];
-  const totalKwh=weekKwh.reduce((a,b)=>a+b,0).toFixed(1);
-  const peakDay=weekDays[weekKwh.indexOf(Math.max(...weekKwh))];
-  const avgDaily=(weekKwh.reduce((a,b)=>a+b,0)/7).toFixed(1);
+
+  let hourlyData=DEMO_HOURLY, weekDays=DEMO_WEEKLY.days, weekKwh=DEMO_WEEKLY.kwh;
+  let rooms=DEMO_ROOMS, weekTotal=260.0, dailyAvg=37.1, monthForecast=1113.0, rate=6.00;
+  let anomalyStats={total:4,total_excess:5693,first_hour:10,last_hour:14};
+  let topRoom={room_name:'Room 204',equipment_label:'Air Conditioner',cnt:2};
+  let hasLiveData=false;
+
+  try{
+    const d=await api('get_analytics');
+    if(d.hourly_pattern&&d.hourly_pattern.some(v=>v>0)){
+      hourlyData=d.hourly_pattern; hasLiveData=true;
+    }
+    if(d.weekly&&d.weekly.length){
+      weekDays=d.weekly.map(w=>w.day_name.substr(0,3));
+      weekKwh=d.weekly.map(w=>parseFloat(w.total_kwh));
+    }
+    if(d.rooms&&d.rooms.length) rooms=d.rooms;
+    if(d.week_total_kwh>0) weekTotal=d.week_total_kwh;
+    if(d.daily_avg_kwh>0)  dailyAvg=d.daily_avg_kwh;
+    if(d.month_forecast>0) monthForecast=d.month_forecast;
+    if(d.kwh_rate)         rate=parseFloat(d.kwh_rate);
+    if(d.anomaly_stats)    anomalyStats=d.anomaly_stats;
+    if(d.top_room)         topRoom=d.top_room;
+  }catch{}
+
+  // Trigger auto-cleanup of old resolved anomalies
+  api('auto_resolve_anomalies',null,'POST').catch(()=>{});
+
+  const peakDayIdx=weekKwh.indexOf(Math.max(...weekKwh));
+  const peakDay=weekDays[peakDayIdx]||'—';
+  const estMonthlyCost=(monthForecast*rate).toFixed(2);
+  const avgExcess=anomalyStats.total>0?Math.round(parseFloat(anomalyStats.total_excess||0)/anomalyStats.total):0;
+  const totalKwhRooms=rooms.reduce((s,r)=>s+parseFloat(r.total_kwh||0),0)||1;
 
   pc.innerHTML=`
-    <!-- KPI row -->
+    ${!hasLiveData?`<div style="margin-bottom:14px;padding:10px 14px;background:var(--icon-bg-yellow);border:1px solid var(--yellow);border-radius:var(--radius);font-size:12px;color:var(--text-secondary)">
+      <strong>Demo data shown</strong> — connect the ESP32 and send readings to see live analytics.
+    </div>`:''}
+
+    <!-- KPI Summary -->
     <div class="stats-row mb-20">
-      <div class="stat-card"><div class="stat-icon-wrap" style="background:var(--icon-bg-blue)">${ICONS.analytics}</div>
-        <div class="stat-text"><label>Total (This Week)</label><h2>${totalKwh} kWh</h2><small>7-day consumption</small></div>
+      <div class="stat-card">
+        <div class="stat-icon-wrap" style="background:var(--icon-bg-blue)">${ICONS.analytics}</div>
+        <div class="stat-text"><label>Total This Week</label><h2>${weekTotal.toFixed(1)} kWh</h2><small>7-day consumption</small></div>
       </div>
-      <div class="stat-card"><div class="stat-icon-wrap" style="background:var(--icon-bg-green)"><svg width="24" height="24" fill="none" stroke="#22c55e" stroke-width="2" viewBox="0 0 24 24"><polyline points="22,7 13.5,15.5 8.5,10.5 2,17"/></svg></div>
-        <div class="stat-text"><label>Daily Average</label><h2>${avgDaily} kWh</h2><small>This week</small></div>
+      <div class="stat-card">
+        <div class="stat-icon-wrap" style="background:var(--icon-bg-green)"><svg width="24" height="24" fill="none" stroke="#22c55e" stroke-width="2" viewBox="0 0 24 24"><polyline points="22,7 13.5,15.5 8.5,10.5 2,17"/></svg></div>
+        <div class="stat-text"><label>Daily Average</label><h2>${dailyAvg.toFixed(1)} kWh</h2><small>Last 30 days</small></div>
       </div>
-      <div class="stat-card"><div class="stat-icon-wrap" style="background:var(--icon-bg-yellow)"><svg width="24" height="24" fill="none" stroke="#f59e0b" stroke-width="2" viewBox="0 0 24 24"><polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26 12,2"/></svg></div>
+      <div class="stat-card">
+        <div class="stat-icon-wrap" style="background:var(--icon-bg-yellow)"><svg width="24" height="24" fill="none" stroke="#f59e0b" stroke-width="2" viewBox="0 0 24 24"><polygon points="12,2 15.09,8.26 22,9.27 17,14.14 18.18,21.02 12,17.77 5.82,21.02 7,14.14 2,9.27 8.91,8.26 12,2"/></svg></div>
         <div class="stat-text"><label>Peak Day</label><h2>${peakDay}</h2><small>${Math.max(...weekKwh).toFixed(1)} kWh peak</small></div>
       </div>
-      <div class="stat-card"><div class="stat-icon-wrap" style="background:var(--icon-bg-red)"><svg width="24" height="24" fill="none" stroke="#ef4444" stroke-width="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
-        <div class="stat-text"><label>Est. Monthly Cost</label><h2>₱${(parseFloat(totalKwh)*4*6).toFixed(0)}</h2><small>@ ₱6/kWh rate</small></div>
+      <div class="stat-card">
+        <div class="stat-icon-wrap" style="background:var(--icon-bg-red)"><svg width="24" height="24" fill="none" stroke="#ef4444" stroke-width="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
+        <div class="stat-text"><label>Est. Monthly Cost</label><h2>₱${parseFloat(estMonthlyCost).toLocaleString()}</h2><small>@ ₱${rate}/kWh rate</small></div>
       </div>
     </div>
 
     <!-- Hourly pattern + Weekly bar -->
     <div class="grid-2 mb-16">
       <div class="chart-card">
-        <div class="chart-header"><h3>Average Hourly Pattern</h3><span class="chart-date-label">Typical Day</span></div>
+        <div class="chart-header"><h3>Average Hourly Consumption Pattern</h3><span class="chart-date-label">Typical Day</span></div>
         <div id="hourly-chart"></div>
       </div>
       <div class="chart-card">
@@ -545,27 +578,31 @@ async function renderAnalytics(){
       </div>
     </div>
 
-    <!-- Room breakdown table -->
+    <!-- Room-by-room breakdown -->
     <div class="card card-body mb-16">
-      <div class="flex-bc mb-16">
+      <div class="flex-bc mb-14">
         <div class="card-title" style="margin:0">Room-by-Room Breakdown</div>
-        <span style="font-size:11px;color:var(--text-muted)">Avg / Peak / Energy / Anomalies</span>
+        <span style="font-size:11px;color:var(--text-muted)">Last 30 days · Avg / Peak / Energy / % Share / Anomalies</span>
       </div>
       <div class="tbl-wrap" style="box-shadow:none;border:1px solid var(--border)">
         <table>
           <thead><tr><th>Room</th><th>Equipment</th><th>Avg Power</th><th>Peak Power</th><th>Energy (kWh)</th><th>% of Total</th><th>Anomalies</th></tr></thead>
           <tbody>
-            ${roomData.map(r=>{
-              const share=(r.kwh/roomData.reduce((a,x)=>a+x.kwh,0)*100).toFixed(1);
-              const barW=Math.round(r.avg/5300*100);
+            ${rooms.map(r=>{
+              const share=(parseFloat(r.total_kwh||0)/totalKwhRooms*100).toFixed(1);
+              const barW=Math.min(100,Math.round(parseFloat(r.avg_power||0)/6000*100));
               const barCls=barW>80?'prog-over':barW>60?'prog-warn':'prog-ok';
               return`<tr>
-                <td class="fw7">${r.name}</td><td style="color:var(--text-secondary)">${r.equip}</td>
-                <td><div style="display:flex;align-items:center;gap:8px"><span class="fw7">${r.avg.toLocaleString()} W</span><div style="width:60px">${prog(barW,barCls)}</div></div></td>
-                <td>${r.peak.toLocaleString()} W</td>
-                <td>${r.kwh.toFixed(1)}</td>
+                <td class="fw7">${r.room_name}</td>
+                <td style="color:var(--text-secondary)">${r.equipment_label}</td>
+                <td><div style="display:flex;align-items:center;gap:8px">
+                  <span class="fw7">${parseFloat(r.avg_power||0).toLocaleString()} W</span>
+                  <div style="width:56px">${prog(barW,barCls)}</div>
+                </div></td>
+                <td>${parseFloat(r.peak_power||0).toLocaleString()} W</td>
+                <td>${parseFloat(r.total_kwh||0).toFixed(1)} kWh</td>
                 <td>${share}%</td>
-                <td>${r.anomalies>0?badge(r.anomalies+' found','b-high'):badge('None','b-normal')}</td>
+                <td>${parseInt(r.anomaly_count||0)>0?badge(r.anomaly_count+' found','b-high'):badge('None','b-normal')}</td>
               </tr>`;
             }).join('')}
           </tbody>
@@ -573,30 +610,41 @@ async function renderAnalytics(){
       </div>
     </div>
 
-    <!-- Forecast card -->
-    <div class="card card-body">
-      <div class="card-title">Consumption Forecast</div>
-      <div class="grid-2">
-        <div>
-          <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">Based on current trends, estimated monthly consumption:</p>
-          ${[['This Month (projected)','1,340 kWh','₱8,040'],['Last Month','1,180 kWh','₱7,080'],['Change','+13.6%','↑ Higher']].map(([l,v,s])=>`
-            <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
-              <span style="font-size:13px;color:var(--text-secondary)">${l}</span>
-              <div style="text-align:right"><strong style="font-size:14px">${v}</strong><br><span style="font-size:11px;color:var(--text-muted)">${s}</span></div>
-            </div>`).join('')}
-        </div>
-        <div>
-          <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">Anomaly detection rate this week:</p>
-          ${[['Total anomalies','4 events'],['Most affected','Room 204 – AC'],['Peak anomaly time','10:00–12:00 AM'],['Avg excess power','1,423 W over limit']].map(([l,v])=>`
-            <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
-              <span style="font-size:13px;color:var(--text-secondary)">${l}</span>
-              <strong style="font-size:13px">${v}</strong>
-            </div>`).join('')}
-        </div>
+    <!-- Forecast + Anomaly stats -->
+    <div class="grid-2">
+      <div class="card card-body">
+        <div class="card-title">Consumption Forecast</div>
+        <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Based on 30-day rolling average (${dailyAvg.toFixed(1)} kWh/day)</p>
+        ${[
+          ['Projected Monthly Usage', monthForecast.toFixed(1)+' kWh', '30 × daily avg'],
+          ['Estimated Monthly Cost',  '₱'+parseFloat(estMonthlyCost).toLocaleString(), '@ ₱'+rate+'/kWh'],
+          ['Weekly Average',          (weekTotal/7).toFixed(1)+' kWh/day', 'Last 7 days'],
+        ].map(([l,v,s])=>`
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
+            <span style="font-size:13px;color:var(--text-secondary)">${l}</span>
+            <div style="text-align:right">
+              <strong style="font-size:14px">${v}</strong><br>
+              <span style="font-size:11px;color:var(--text-muted)">${s}</span>
+            </div>
+          </div>`).join('')}
+      </div>
+      <div class="card card-body">
+        <div class="card-title">Anomaly Analysis</div>
+        <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Last 7 days anomaly detection summary</p>
+        ${[
+          ['Total Anomalies Detected', anomalyStats.total+' events'],
+          ['Most Affected Room',        topRoom?(topRoom.room_name+' – '+topRoom.equipment_label):'None'],
+          ['Peak Anomaly Window',       anomalyStats.total>0?(anomalyStats.first_hour+':00 – '+anomalyStats.last_hour+':00'):'—'],
+          ['Avg Excess Power',          anomalyStats.total>0?(avgExcess.toLocaleString()+' W over limit'):'—'],
+        ].map(([l,v])=>`
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
+            <span style="font-size:13px;color:var(--text-secondary)">${l}</span>
+            <strong style="font-size:13px">${v}</strong>
+          </div>`).join('')}
       </div>
     </div>`;
 
-  renderChart(Array.from({length:24},(_,i)=>`${i}:00`),hourlyAvg,'hourly-chart',160);
+  renderChart(Array.from({length:24},(_,i)=>`${i}:00`),hourlyData,'hourly-chart',160);
   renderWeeklyBar(weekDays,weekKwh,'weekly-bar');
 }
 
@@ -776,7 +824,7 @@ async function loadUsersList(){
   try{
     const users=await api('get_users');state.users=users;
     $('users-list').innerHTML=users.map(u=>{
-      const rs=ROLE_STYLE[u.role_key]||ROLE_STYLE.viewer;
+      const rs=ROLE_STYLE[u.role_key]||ROLE_STYLE.staff;
       const isMe=u.user_id==state.user?.user_id;
       return`<div class="user-card">
         <div class="u-avatar" style="background:var(--avatar-bg);color:var(--text)">${u.avatar}</div>
@@ -815,7 +863,7 @@ function showUserForm(id=null){
       </div>
       <div style="margin-top:4px;padding:12px 14px;background:var(--bg-secondary);border-radius:var(--radius)">
         <p style="font-size:11px;font-weight:600;color:var(--text-muted);margin-bottom:8px">Permissions for selected role:</p>
-        <div id="perm-prev" class="perm-tags">${(ROLE_PERMS_MAP[u?.role_key||'viewer']||[]).map(p=>`<span class="perm-tag">${p}</span>`).join('')}</div>
+        <div id="perm-prev" class="perm-tags">${(ROLE_PERMS_MAP[u?.role_key||'staff']||[]).map(p=>`<span class="perm-tag">${p}</span>`).join('')}</div>
       </div>
       <div class="form-actions">
         <button class="btn btn-primary" onclick="saveUser(${id||'null'})">${ICONS.check} Save</button>
@@ -825,7 +873,7 @@ function showUserForm(id=null){
 }
 
 function updatePermPrev(){
-  const r=$('uf-role')?.value||'viewer';
+  const r=$('uf-role')?.value||'staff';
   $('perm-prev').innerHTML=(ROLE_PERMS_MAP[r]||[]).map(p=>`<span class="perm-tag">${p}</span>`).join('');
 }
 
@@ -872,6 +920,7 @@ async function renderSettings(){
         <div class="form-group"><label>Timezone</label><input id="s-tz" class="form-ctrl" value="Asia/Manila"></div>
         <div class="form-group"><label>Refresh Rate (seconds)</label><input id="s-ref" type="number" class="form-ctrl" value="5"></div>
         <div class="form-group"><label>Data Retention (days)</label><input id="s-ret" type="number" class="form-ctrl" value="90"></div>
+        <div class="form-group"><label>Electricity Rate (₱/kWh)</label><input id="s-rate" type="number" step="0.01" class="form-ctrl" value="6.00"></div>
         <div class="form-group"><label>Anomaly Auto-Delete (days after resolved)</label><input id="s-anomdel" type="number" class="form-ctrl" value="30"></div>
       </div>
       <div class="card card-body">
@@ -893,18 +942,19 @@ async function renderSettings(){
     if($('s-ref'))$('s-ref').value=s.refresh_rate||'5';
     if($('s-ret'))$('s-ret').value=s.data_retention||'90';
     ['alert_email','alert_dashboard','alert_buzzer'].forEach(k=>{const e=$('tog-'+k);if(e)e.checked=s[k]!=='0';});
+    if($('s-rate'))$('s-rate').value=s.kwh_rate||'6.00';
   }catch{}
 }
 
 async function saveSettings(){
-  const d={system_name:$('s-name')?.value||'WattWatch',timezone:$('s-tz')?.value||'Asia/Manila',refresh_rate:$('s-ref')?.value||'5',data_retention:$('s-ret')?.value||'90',alert_email:$('tog-alert_email')?.checked?'1':'0',alert_dashboard:$('tog-alert_dashboard')?.checked?'1':'0',alert_buzzer:$('tog-alert_buzzer')?.checked?'1':'0'};
+  const d={system_name:$('s-name')?.value||'WattWatch',timezone:$('s-tz')?.value||'Asia/Manila',refresh_rate:$('s-ref')?.value||'5',data_retention:$('s-ret')?.value||'90',alert_email:$('tog-alert_email')?.checked?'1':'0',alert_dashboard:$('tog-alert_dashboard')?.checked?'1':'0',alert_buzzer:$('tog-alert_buzzer')?.checked?'1':'0',kwh_rate:$('s-rate')?.value||'6.00'};
   try{await api('save_settings',d,'POST');showAlert('set-alert','Settings saved!');}
   catch(e){showAlert('set-alert',e.message,'error');}
 }
 
 // ── Profile ──────────────────────────────────────────────────────
 async function renderProfile(){
-  const u=state.user;const rs=ROLE_STYLE[u.role_key]||ROLE_STYLE.viewer;
+  const u=state.user;const rs=ROLE_STYLE[u.role_key]||ROLE_STYLE.staff;
   const perms=ROLE_PERMS_MAP[u.role_key]||[];
   $('page-content').innerHTML=`
     <div class="grid-2">
@@ -952,23 +1002,23 @@ async function changePassword(){
 let notifOpen=false;
 
 const NAV_DEF=[
-  {id:'dashboard', label:'Dashboard',           icon:'dashboard', roles:['admin','facility_manager','technician','viewer']},
+  {id:'dashboard', label:'Dashboard',           icon:'dashboard', roles:['admin','staff']},
   {id:'rooms',     label:'Rooms / Equipment',   icon:'room',      roles:['admin']},
-  {id:'monitoring',label:'Real-time Monitoring',icon:'monitor',   roles:['admin'],altLabel:'My Monitoring',altRoles:['facility_manager','technician']},
-  {id:'anomalies', label:'Anomalies',           icon:'alert',     roles:['admin','facility_manager','technician'],badge:true},
-  {id:'analytics', label:'Analytics',           icon:'analytics', roles:['admin','facility_manager']},
-  {id:'reports',   label:'Reports',             icon:'report',    roles:['admin','facility_manager']},
+  {id:'monitoring',label:'Real-time Monitoring',icon:'monitor',   roles:['admin','staff']},
+  {id:'anomalies', label:'Anomalies',           icon:'alert',     roles:['admin','staff'],badge:true},
+  {id:'analytics', label:'Analytics',           icon:'analytics', roles:['admin','staff']},
+  {id:'reports',   label:'Reports',             icon:'report',    roles:['admin','staff']},
   {id:'thresholds',label:'Thresholds',          icon:'threshold', roles:['admin']},
   {id:'users',     label:'Users',               icon:'users',     roles:['admin']},
   {id:'logs',      label:'Logs',                icon:'logs',      roles:['admin']},
   {id:'settings',  label:'Settings',            icon:'settings',  roles:['admin']},
-  {id:'profile',   label:'My Profile',          icon:'profile',   roles:['admin','facility_manager','technician','viewer']},
+  {id:'profile',   label:'My Profile',          icon:'profile',   roles:['admin','staff']},
 ];
 
 function buildShell(user){
-  const rs=ROLE_STYLE[user.role_key]||ROLE_STYLE.viewer;
-  const navHTML=NAV_DEF.filter(n=>[...(n.roles||[]),...(n.altRoles||[])].includes(user.role_key)).map(n=>{
-    const label=n.altRoles?.includes(user.role_key)?(n.altLabel||n.label):n.label;
+  const rs=ROLE_STYLE[user.role_key]||ROLE_STYLE.staff;
+  const navHTML=NAV_DEF.filter(n=>(n.roles||[]).includes(user.role_key)).map(n=>{
+    const label=n.label;
     return`<button class="nav-item ${n.id==='dashboard'?'active':''}" data-page="${n.id}" onclick="navigate('${n.id}')">
       <span class="nav-icon">${ICONS[n.icon]||''}</span>${label}
       ${n.badge?`<span class="nav-badge hidden" id="nav-anom-badge">0</span>`:''}
@@ -989,7 +1039,7 @@ function buildShell(user){
           <div class="sys-status-val">Online</div>
           <div class="sys-status-sub">All systems operational.</div>
         </div>
-        ${user.role_key!=='admin'?`<div class="help-box" style="margin-top:12px">
+        ${user.role_key==='staff'?`<div class="help-box" style="margin-top:12px">
           <div class="help-title">${ICONS.help} Need Help?</div>
           <p>Contact your administrator<br>for assistance.</p>
         </div>`:''}
@@ -1125,9 +1175,7 @@ function buildLogin(){
         <div class="login-demo">
           <div class="login-demo-title">Demo Accounts</div>
           ${[['Administrator','admin@wattwatch.com','admin123'],
-             ['Facility Manager','juan@wattwatch.com','juan123'],
-             ['Technician','maria@wattwatch.com','maria123'],
-             ['Viewer','carlos@wattwatch.com','carlos123'],
+             ['Staff / Technician','staff@wattwatch.com','juan123'],
             ].map(([l,e,p])=>`<button class="demo-btn" onclick="fillDemo('${e}','${p}')"><strong>${l}</strong> — ${e}</button>`).join('')}
         </div>
       </div>
